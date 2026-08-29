@@ -11,6 +11,78 @@ ARCHIVE_METADATA_URL = "https://archive.org/metadata/{id}"
 ARCHIVE_DOWNLOAD_URL = "https://archive.org/download/{id}/{name}"
 DEFAULT_EXTENSIONS = [".txt", ".cue", ".bin"]
 
+TRANSLATIONS = {
+    "fr": {
+        "extract_error": "Impossible d'extraire l'identifiant depuis l'URL : {0}",
+        "download_start": "Téléchargement: {0} -> {1}",
+        "downloaded": "Téléchargé: {0}",
+        "cli_description": "Télécharge les fichiers .txt, .cue et .bin d'un item archive.org en conservant l'arborescence.",
+        "cli_url_help": "URL archive.org de l'item ou identifiant de l'archive",
+        "cli_dir_help": "Dossier de destination où créer l'arborescence et enregistrer les fichiers (par défaut: Download)",
+        "cli_ext_help": "Extensions à télécharger, séparées par des virgules (par défaut: .txt,.cue,.bin)",
+        "cli_lang_help": "Langue de l'interface (par défaut: auto-détection depuis l'environnement)",
+        "error": "Erreur: {0}",
+        "item": "Item archive.org: {0}",
+        "subdir": "Sous-dossier: {0}",
+        "dest_dir": "Dossier de destination: {0}",
+        "extensions": "Extensions recherchées: {0}",
+        "metadata_error": "Impossible de récupérer les métadonnées archive.org: {0}",
+        "no_files": "Aucun fichier trouvé pour les extensions demandées.",
+        "already_exists": "Fichier déjà existant, passage au suivant: {0}",
+        "download_failed": "Échec du téléchargement de {0}: {1}",
+        "done": "Téléchargement terminé.",
+        "unit_octets": "octets",
+        "unit_Ko": "Ko",
+        "unit_Mo": "Mo",
+        "unit_Go": "Go",
+    },
+    "en": {
+        "extract_error": "Unable to extract the identifier from the URL: {0}",
+        "download_start": "Downloading: {0} -> {1}",
+        "downloaded": "Downloaded: {0}",
+        "cli_description": "Download the .txt, .cue and .bin files of an archive.org item, preserving the folder structure.",
+        "cli_url_help": "archive.org item URL or archive identifier",
+        "cli_dir_help": "Destination folder where the structure is created and files are saved (default: Download)",
+        "cli_ext_help": "Extensions to download, comma-separated (default: .txt,.cue,.bin)",
+        "cli_lang_help": "Interface language (default: auto-detect from the environment)",
+        "error": "Error: {0}",
+        "item": "archive.org item: {0}",
+        "subdir": "Subfolder: {0}",
+        "dest_dir": "Destination folder: {0}",
+        "extensions": "Extensions searched: {0}",
+        "metadata_error": "Unable to fetch archive.org metadata: {0}",
+        "no_files": "No file found for the requested extensions.",
+        "already_exists": "File already exists, skipping: {0}",
+        "download_failed": "Failed to download {0}: {1}",
+        "done": "Download complete.",
+        "unit_octets": "bytes",
+        "unit_Ko": "KB",
+        "unit_Mo": "MB",
+        "unit_Go": "GB",
+    },
+}
+
+_LANG = "fr"
+
+
+def activate_language(lang: str) -> None:
+    global _LANG
+    _LANG = lang if lang in TRANSLATIONS else "fr"
+
+
+def _(key: str) -> str:
+    return TRANSLATIONS[_LANG][key]
+
+
+def detect_language() -> str:
+    for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        value = os.environ.get(var, "")
+        if value:
+            code = value.split(".")[0].split("_")[0].lower()
+            if code in TRANSLATIONS:
+                return code
+    return "fr"
+
 
 def extract_identifier_and_subdir(url_or_id: str) -> tuple[str, str]:
     parsed = urllib.parse.urlparse(url_or_id)
@@ -24,7 +96,7 @@ def extract_identifier_and_subdir(url_or_id: str) -> tuple[str, str]:
             parts = path.split("/")
 
         if not parts or not parts[0]:
-            raise ValueError(f"Impossible d'extraire l'identifiant depuis l'URL : {url_or_id}")
+            raise ValueError(_("extract_error").format(url_or_id))
 
         identifier = parts[0]
         subdir_components = [urllib.parse.unquote(p) for p in parts[1:] if p]
@@ -61,17 +133,18 @@ def quote_archive_name(name: str) -> str:
 
 
 def format_bytes(size: int) -> str:
-    for unit in ["octets", "Ko", "Mo", "Go"]:
-        if size < 1024 or unit == "Go":
+    for unit_key in ["unit_octets", "unit_Ko", "unit_Mo", "unit_Go"]:
+        unit = _(unit_key)
+        if size < 1024 or unit_key == "unit_Go":
             return f"{size:.1f} {unit}"
         size /= 1024
-    return f"{size:.1f} Go"
+    return f"{size:.1f} {_('unit_Go')}"
 
 
 def download_file(identifier: str, file_name: str, dest_path: str) -> None:
     url_name = quote_archive_name(file_name)
     url = ARCHIVE_DOWNLOAD_URL.format(id=urllib.parse.quote(identifier), name=url_name)
-    print(f"Téléchargement: {file_name} -> {dest_path}")
+    print(_("download_start").format(file_name, dest_path))
 
     def reporthook(block_count: int, block_size: int, total_size: int) -> None:
         downloaded = block_count * block_size
@@ -85,7 +158,7 @@ def download_file(identifier: str, file_name: str, dest_path: str) -> None:
                 f"\r[{bar}] {percent:5.1f}% {format_bytes(downloaded)}/{format_bytes(total_size)}"
             )
         else:
-            sys.stdout.write(f"\rTéléchargé: {format_bytes(downloaded)}")
+            sys.stdout.write(f"\r{_('downloaded').format(format_bytes(downloaded))}")
         sys.stdout.flush()
 
     urllib.request.urlretrieve(url, dest_path, reporthook=reporthook)
@@ -93,42 +166,56 @@ def download_file(identifier: str, file_name: str, dest_path: str) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Télécharge les fichiers .txt, .cue et .bin d'un item archive.org en conservant l'arborescence."
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument(
+        "--lang",
+        choices=sorted(TRANSLATIONS.keys()),
+        default=None,
+        help=_("cli_lang_help"),
     )
-    parser.add_argument("url", help="URL archive.org de l'item ou identifiant de l'archive")
+    pre_args, _remaining = pre_parser.parse_known_args()
+    activate_language(pre_args.lang if pre_args.lang else detect_language())
+
+    parser = argparse.ArgumentParser(description=_("cli_description"))
+    parser.add_argument("url", help=_("cli_url_help"))
     parser.add_argument(
         "--download-dir",
         default="Download",
-        help="Dossier de destination où créer l'arborescence et enregistrer les fichiers (par défaut: Download)",
+        help=_("cli_dir_help"),
     )
     parser.add_argument(
         "--extensions",
         default=",".join(DEFAULT_EXTENSIONS),
-        help="Extensions à télécharger, séparées par des virgules (par défaut: .txt,.cue,.bin)",
+        help=_("cli_ext_help"),
+    )
+    parser.add_argument(
+        "--lang",
+        choices=sorted(TRANSLATIONS.keys()),
+        default=None,
+        help=_("cli_lang_help"),
     )
     args = parser.parse_args()
 
     try:
         identifier, subdir = extract_identifier_and_subdir(args.url)
     except ValueError as exc:
-        print(f"Erreur: {exc}", file=sys.stderr)
+        print(_("error").format(exc), file=sys.stderr)
         return 1
 
     extensions = [ext.strip().lower() for ext in args.extensions.split(",") if ext.strip()]
     download_dir = os.path.abspath(args.download_dir)
     os.makedirs(download_dir, exist_ok=True)
 
-    print(f"Item archive.org: {identifier}")
+    print(_("item").format(identifier))
     if subdir:
-        print(f"Sous-dossier: {subdir}")
-    print(f"Dossier de destination: {download_dir}")
-    print(f"Extensions recherchées: {', '.join(extensions)}")
+        print(_("subdir").format(subdir))
+    print(_("dest_dir").format(download_dir))
+    print(_("extensions").format(", ".join(extensions)))
 
     try:
         archive_files = get_archive_files(identifier)
     except Exception as exc:
-        print(f"Impossible de récupérer les métadonnées archive.org: {exc}", file=sys.stderr)
+        print(_("metadata_error").format(exc), file=sys.stderr)
         return 1
 
     candidates = []
@@ -142,7 +229,7 @@ def main() -> int:
                 continue
         candidates.append(f)
     if not candidates:
-        print("Aucun fichier trouvé pour les extensions demandées.")
+        print(_("no_files"))
         return 0
 
     for file_info in candidates:
@@ -151,15 +238,15 @@ def main() -> int:
             continue
         local_path = build_local_path(download_dir, name)
         if os.path.exists(local_path):
-            print(f"Fichier déjà existant, passage au suivant: {name}")
+            print(_("already_exists").format(name))
             continue
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         try:
             download_file(identifier, name, local_path)
         except Exception as exc:
-            print(f"Échec du téléchargement de {name}: {exc}", file=sys.stderr)
+            print(_("download_failed").format(name, exc), file=sys.stderr)
 
-    print("Téléchargement terminé.")
+    print(_("done"))
     return 0
 
 
