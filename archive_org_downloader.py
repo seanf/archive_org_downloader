@@ -12,18 +12,30 @@ ARCHIVE_DOWNLOAD_URL = "https://archive.org/download/{id}/{name}"
 DEFAULT_EXTENSIONS = [".txt", ".cue", ".bin"]
 
 
-def extract_identifier(url_or_id: str) -> str:
+def extract_identifier_and_subdir(url_or_id: str) -> tuple[str, str]:
     parsed = urllib.parse.urlparse(url_or_id)
     if parsed.scheme and parsed.netloc:
         path = parsed.path.strip("/")
         if path.startswith("details/"):
-            return path[len("details/") :].split("/")[0]
-        if path.startswith("download/"):
-            return path[len("download/") :].split("/")[0]
-        if path:
-            return path.split("/")[0]
-        raise ValueError(f"Impossible d'extraire l'identifiant depuis l'URL : {url_or_id}")
-    return url_or_id
+            parts = path[len("details/") :].split("/")
+        elif path.startswith("download/"):
+            parts = path[len("download/") :].split("/")
+        else:
+            parts = path.split("/")
+
+        if not parts or not parts[0]:
+            raise ValueError(f"Impossible d'extraire l'identifiant depuis l'URL : {url_or_id}")
+
+        identifier = parts[0]
+        subdir_components = [urllib.parse.unquote(p) for p in parts[1:] if p]
+        subdir = "/".join(subdir_components)
+        return identifier, subdir
+    return url_or_id, ""
+
+
+def extract_identifier(url_or_id: str) -> str:
+    identifier, _ = extract_identifier_and_subdir(url_or_id)
+    return identifier
 
 
 def get_archive_files(identifier: str) -> list[dict]:
@@ -98,7 +110,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        identifier = extract_identifier(args.url)
+        identifier, subdir = extract_identifier_and_subdir(args.url)
     except ValueError as exc:
         print(f"Erreur: {exc}", file=sys.stderr)
         return 1
@@ -108,6 +120,8 @@ def main() -> int:
     os.makedirs(download_dir, exist_ok=True)
 
     print(f"Item archive.org: {identifier}")
+    if subdir:
+        print(f"Sous-dossier: {subdir}")
     print(f"Dossier de destination: {download_dir}")
     print(f"Extensions recherchées: {', '.join(extensions)}")
 
@@ -117,7 +131,16 @@ def main() -> int:
         print(f"Impossible de récupérer les métadonnées archive.org: {exc}", file=sys.stderr)
         return 1
 
-    candidates = [f for f in archive_files if is_valid_file(f.get("name", ""), extensions)]
+    candidates = []
+    for f in archive_files:
+        name = f.get("name", "")
+        if not is_valid_file(name, extensions):
+            continue
+        if subdir:
+            if not (name == subdir or name.startswith(subdir + "/") or
+                    name.lower() == subdir.lower() or name.lower().startswith(subdir.lower() + "/")):
+                continue
+        candidates.append(f)
     if not candidates:
         print("Aucun fichier trouvé pour les extensions demandées.")
         return 0
